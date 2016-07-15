@@ -58,21 +58,7 @@ void update_stamp() {
 
 const char * get_free_key()
 {
-  int random = rand() % 3;
-  switch(random) {
-    case 0:
-      return "dfd8a4072278c629a38c6f8364498c88"; // z
-      break;
-
-    case 1:
-      return "4837dd52a10906ac0468b834ca2f3d49"; // z1
-      break;
-
-    case 2:
-      return "270ef2bf94d16d0f69e4422c071191e0"; // z2
-      break;
-  }
-      return "270ef2bf94d16d0f69e4422c071191e0"; 
+  return "key";  // Enter your Forecast.io API Key here
 }
 
 static bool check_last_timestamp() {
