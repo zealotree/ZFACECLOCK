@@ -9,6 +9,17 @@
 #define ANIMATION_DURATION 800
 #define ANIMATION_DELAY    600
 
+// Persistent Keys
+#define LAT 222
+#define LON 223
+#define UGPS 224
+#define TEMP 225
+#define LAST_UPDATED 226
+#define UNITS 227
+
+// Ready Signal
+static bool s_js_ready = false;
+ 
 typedef struct {
   int hours;
   int minutes;
@@ -19,6 +30,8 @@ static Window *s_main_window;
 static TextLayer *s_time_layer;
 static TextLayer *s_battery_layer;
 static TextLayer *s_connection_layer;
+static TextLayer *date_layer;
+static TextLayer *temp_layer;
 
 static Layer *s_canvas_layer;
 
@@ -32,6 +45,102 @@ static int s_anim_hours_60 = 0;
 static int s_color_channels[3];
 static bool s_animating = false;
 static bool s_setting = false;
+static char fio_key_buffer[100];
+
+
+
+/*************************** Data Request/Control Functions **************************/
+
+void update_stamp() {
+  //APP_LOG(APP_LOG_LEVEL_DEBUG, "New timestamp: %d", (int)time(NULL));
+  persist_write_int(LAST_UPDATED, (int)time(NULL));
+}
+
+const char * get_free_key()
+{
+  int random = rand() % 3;
+  switch(random) {
+    case 0:
+      return "dfd8a4072278c629a38c6f8364498c88"; // z
+      break;
+
+    case 1:
+      return "4837dd52a10906ac0468b834ca2f3d49"; // z1
+      break;
+
+    case 2:
+      return "270ef2bf94d16d0f69e4422c071191e0"; // z2
+      break;
+  }
+      return "270ef2bf94d16d0f69e4422c071191e0"; 
+}
+
+static bool check_last_timestamp() {
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Checking the last updated timestamp");
+
+  if ((persist_exists(LAST_UPDATED))) {
+    int max = 30; // Every 15 minutes
+    // APP_LOG(APP_LOG_LEVEL_DEBUG, "Max age is %d seconds", max);
+    int new = max / 6;
+    int now = (int)time(NULL);
+    int difference = now - persist_read_int(LAST_UPDATED); 
+    //APP_LOG(APP_LOG_LEVEL_DEBUG, "The difference is %d", difference);
+    if (difference == 0 || difference <= new) {
+      return false;
+    } else if (difference > new && difference < max) {
+      return false;
+    } else if (difference >= max) {
+      return true; 
+    }
+    return false;
+  }
+  return true;
+}
+
+void request_data() {
+  if (! s_js_ready) {
+    return ;
+  }
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "Requesting Data");
+  DictionaryIterator *out_iter;
+  AppMessageResult result = app_message_outbox_begin(&out_iter);
+  if(result == APP_MSG_OK) {
+    int value = 1;
+    dict_write_int(out_iter, MESSAGE_KEY_SEND, &value, sizeof(int), true);
+
+    if (persist_exists(UGPS) && persist_read_bool(UGPS)) {
+      dict_write_int(out_iter, MESSAGE_KEY_Use_GPS, &value, sizeof(int), true);
+    }
+
+    if (persist_exists(UNITS) && persist_read_bool(UNITS)) {
+      dict_write_int(out_iter, MESSAGE_KEY_Use_Imperial, &value, sizeof(int), true);
+    } else if (persist_exists(UNITS) && persist_read_bool(UNITS) == false) {
+      int nada = 0;
+      dict_write_int(out_iter, MESSAGE_KEY_Use_Imperial, &nada, sizeof(int), true);
+    }
+    strcpy(fio_key_buffer, get_free_key());
+    dict_write_cstring(out_iter, MESSAGE_KEY_API_Key, get_free_key()); 
+
+    if (persist_exists(LAT)) {
+      static char lat_buffer[20];
+      persist_read_string(LAT, lat_buffer, sizeof(lat_buffer));
+      dict_write_cstring(out_iter, MESSAGE_KEY_Lat, lat_buffer);
+    }
+
+    if (persist_exists(LON)) {
+      static char lon_buffer[20];
+      persist_read_string(LON, lon_buffer, sizeof(lon_buffer));
+      dict_write_cstring(out_iter, MESSAGE_KEY_Lon, lon_buffer);
+    }
+
+    result = app_message_outbox_send();
+    if(result != APP_MSG_OK) {
+      APP_LOG(APP_LOG_LEVEL_ERROR, "Error sending the outbox: %d", (int)result);
+    } else if ((result == APP_MSG_OK)){
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "Data succesfully requested");
+    }
+  }
+}
 
 /*************************** AnimationImplementation **************************/
 // アニメーション開始時の処理（FLGを立てる）
@@ -68,8 +177,24 @@ static void animate(int duration, int delay, AnimationImplementation *implementa
 
 /************************************ UI **************************************/
 
+static void update_temp() {
+  if(persist_exists(TEMP)) {
+    static char temp_buffer[] = "-100°";
+    int temperature = persist_read_int(TEMP);
+    snprintf(temp_buffer, sizeof(temp_buffer), "%d°", temperature);
+    text_layer_set_text(temp_layer, temp_buffer);
+  }
+}
+
 // 定周期割り込み
 static void tick_handler(struct tm *tick_time, TimeUnits changed) {
+
+  // Check if we need new data
+  if (check_last_timestamp()) {
+    request_data();
+  } else {
+    update_temp();
+  }
   // Store time
   // 時間を保存
   s_last_time.hours = tick_time->tm_hour;
@@ -78,8 +203,10 @@ static void tick_handler(struct tm *tick_time, TimeUnits changed) {
 
 
   // 色を設定（乱数？）
-  for(int i = 0; i < 3; i++) {
-    s_color_channels[i] = rand() % 256;
+  if (DAY_UNIT & changed) {
+    for(int i = 0; i < 3; i++) {
+      s_color_channels[i] = rand() % 256;
+    }
   }
   
   // Redraw（再描画）
@@ -93,6 +220,10 @@ static void tick_handler(struct tm *tick_time, TimeUnits changed) {
 
     strftime(s_time_text, sizeof(s_time_text), "%T", tick_time);
     text_layer_set_text(s_time_layer, s_time_text);
+
+    static char s_date_text[] = "Sun 31 Dec";
+    strftime(s_date_text, sizeof(s_date_text), "%a %d %b", tick_time);
+    text_layer_set_text(date_layer, s_date_text);
   }
   
 }
@@ -237,18 +368,17 @@ static void handle_battery(BatteryChargeState charge_state) {
   text_layer_set_text(s_battery_layer, battery_text);
 }
 
-static void handle_second_tick(struct tm *tick_time, TimeUnits changed) {
-  // Needs to be static because it's used by the system later.
-  // システムが後で使ったのでstaticでないといけない。
-  static char s_time_text[] = "00:00";
-
-  strftime(s_time_text, sizeof(s_time_text), "%T", tick_time);
-  text_layer_set_text(s_time_layer, s_time_text);
-
-}
 
 static void handle_bluetooth(bool connected) {
   text_layer_set_text(s_connection_layer, connected ? "OK" : "NG");
+    if (! connected) {
+    static const uint32_t const segments[] = { 1000, 500, 400, 300, 200 };
+      VibePattern pat = {
+        .durations = segments,
+        .num_segments = ARRAY_LENGTH(segments),
+      };
+      vibes_enqueue_custom_pattern(pat);
+    }
 }
 
 
@@ -267,26 +397,39 @@ static void window_load(Window *window) {
   // Windowレイヤーにキャンバスレイヤーを追加
   layer_add_child(window_layer, s_canvas_layer);
   
-  s_time_layer = text_layer_create(GRect(45, 50, window_bounds.size.w - 90, 34));
+  s_time_layer = text_layer_create(GRect(45, 95, window_bounds.size.w - 90, 34));
   text_layer_set_text_color(s_time_layer, GColorBlack);
   text_layer_set_background_color(s_time_layer, GColorClear);
   text_layer_set_font(s_time_layer, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
   text_layer_set_text_alignment(s_time_layer, GTextAlignmentCenter);
 
-  s_connection_layer = text_layer_create(GRect((int)(window_bounds.size.w / 2) - 25,window_bounds.size.h -84, 40, 30));
+  s_connection_layer = text_layer_create(GRect((int)(window_bounds.size.w / 2) - 27,window_bounds.size.h -99, 40, 30));
   text_layer_set_text_color(s_connection_layer, GColorBlack);
   text_layer_set_background_color(s_connection_layer, GColorClear);
   text_layer_set_font(s_connection_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
   text_layer_set_text_alignment(s_connection_layer, GTextAlignmentLeft);
   handle_bluetooth(connection_service_peek_pebble_app_connection());
 
-  s_battery_layer = text_layer_create(GRect((int)(window_bounds.size.w / 2) + 1, window_bounds.size.h -84, window_bounds.size.w,30));
+  s_battery_layer = text_layer_create(GRect((int)(window_bounds.size.w / 2) + 8, window_bounds.size.h -99, window_bounds.size.w,30));
   text_layer_set_text_color(s_battery_layer, GColorBlack);
   text_layer_set_background_color(s_battery_layer, GColorClear);
   text_layer_set_font(s_battery_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
   text_layer_set_text_alignment(s_battery_layer, GTextAlignmentLeft);
   text_layer_set_text(s_battery_layer, "100%");
 
+  date_layer = text_layer_create(GRect(45, 67, window_bounds.size.w - 90, 34));
+  text_layer_set_text_color(date_layer, GColorBlack);
+  text_layer_set_background_color(date_layer, GColorClear);
+  text_layer_set_font(date_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
+  text_layer_set_text_alignment(date_layer, GTextAlignmentCenter);
+  text_layer_set_text(date_layer, "Sun 1 Jan");
+
+  temp_layer = text_layer_create(GRect(46, 46, window_bounds.size.w - 90, 34));
+  text_layer_set_text_color(temp_layer, GColorBlack);
+  text_layer_set_background_color(temp_layer, GColorClear);
+  text_layer_set_font(temp_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
+  text_layer_set_text_alignment(temp_layer, GTextAlignmentCenter);
+  text_layer_set_text(temp_layer, "");
   // Ensures time is displayed immediately (will break if NULL tick event accessed).
   // (This is why it's a good idea to have a separate routine to do the update itself.)
   //time_t now = time(NULL);
@@ -304,6 +447,8 @@ static void window_load(Window *window) {
   layer_add_child(window_layer, text_layer_get_layer(s_time_layer));
   layer_add_child(window_layer, text_layer_get_layer(s_connection_layer));
   layer_add_child(window_layer, text_layer_get_layer(s_battery_layer));
+  layer_add_child(window_layer, text_layer_get_layer(date_layer));
+  layer_add_child(window_layer, text_layer_get_layer(temp_layer));
 
   handle_battery(battery_state_service_peek());
 
@@ -314,6 +459,7 @@ static void window_unload(Window *window) {
   tick_timer_service_unsubscribe();
   battery_state_service_unsubscribe();
   connection_service_unsubscribe();
+  app_message_deregister_callbacks();
   text_layer_destroy(s_time_layer);
   text_layer_destroy(s_connection_layer);
   text_layer_destroy(s_battery_layer);
@@ -344,17 +490,67 @@ static void hands_update(Animation *anim, AnimationProgress dist_normalized) {
   layer_mark_dirty(s_canvas_layer);
 }
 
+
+static void app_connection_handler(bool connected) {
+  if (! connected) {
+      static const uint32_t const segments[] = { 1000, 500, 400, 300, 200 };
+      VibePattern pat = {
+        .durations = segments,
+        .num_segments = ARRAY_LENGTH(segments),
+      };
+      vibes_enqueue_custom_pattern(pat);
+  }
+}
+
+
+static void inbox_received_handler(DictionaryIterator *iter, void *context) {
+  Tuple *ready_tuple = dict_find(iter, MESSAGE_KEY_AppKeyJSReady);
+  if(ready_tuple) {
+    s_js_ready = true;
+  }
+  Tuple *im_t = dict_find(iter, MESSAGE_KEY_Use_Imperial);
+  if (im_t) {
+    persist_write_int(UNITS, im_t->value->int32 == 1);
+  }
+
+  Tuple *lat_tuple = dict_find(iter, MESSAGE_KEY_Lat);
+  Tuple *lon_tuple = dict_find(iter, MESSAGE_KEY_Lon);
+  if (lat_tuple && lon_tuple) {
+    if (strcmp(lat_tuple->value->cstring, "") && strcmp(lon_tuple->value->cstring, "")) {
+      persist_write_string(LAT, lat_tuple->value->cstring);
+      persist_write_string(LON, lon_tuple->value->cstring);
+    }
+  }
+  Tuple *temp_t = dict_find(iter, MESSAGE_KEY_Temperature);
+  if (temp_t) {
+    persist_write_int(TEMP, temp_t->value->int32);
+    update_stamp();
+    update_temp();
+  }
+  Tuple *ug_t = dict_find(iter, MESSAGE_KEY_Use_GPS);
+  if (ug_t) {
+    persist_write_bool(UGPS, ug_t->value->int8);
+    request_data();
+  }
+}
+
 // 初期処理（起動時のアニメーション）
 static void init() {
+  app_message_register_inbox_received(inbox_received_handler);
+  app_message_open(app_message_inbox_size_maximum(), app_message_outbox_size_maximum());
   // 時間を取得？
   srand(time(NULL));
 
-  // 
-  time_t t = time(NULL);
-  // 現在時刻を取得
-  struct tm *time_now = localtime(&t);
-  // タイマーを生成
-  tick_handler(time_now, MINUTE_UNIT);
+  // Get a random Color 
+  for(int i = 0; i < 3; i++) {
+    s_color_channels[i] = rand() % 256;
+  }
+  // // 
+  // time_t t = time(NULL);
+  // // 現在時刻を取得
+  // struct tm *time_now = localtime(&t);
+  // // タイマーを生成
+  // tick_handler(time_now, MINUTE_UNIT);
 
   // 画面を生成
   s_main_window = window_create();
@@ -365,6 +561,7 @@ static void init() {
   });
   window_stack_push(s_main_window, true);
 
+  update_temp();
   // タイマー割り込みサービス起動
   tick_timer_service_subscribe(MINUTE_UNIT, tick_handler);
  
