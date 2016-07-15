@@ -79,7 +79,7 @@ static bool check_last_timestamp() {
   APP_LOG(APP_LOG_LEVEL_DEBUG, "Checking the last updated timestamp");
 
   if ((persist_exists(LAST_UPDATED))) {
-    int max = 30; // Every 15 minutes
+    int max = 900; // Every 15 minutes
     // APP_LOG(APP_LOG_LEVEL_DEBUG, "Max age is %d seconds", max);
     int new = max / 6;
     int now = (int)time(NULL);
@@ -179,7 +179,7 @@ static void animate(int duration, int delay, AnimationImplementation *implementa
 
 static void update_temp() {
   if(persist_exists(TEMP)) {
-    static char temp_buffer[] = "-100°";
+    static char temp_buffer[] = "-400°";
     int temperature = persist_read_int(TEMP);
     snprintf(temp_buffer, sizeof(temp_buffer), "%d°", temperature);
     text_layer_set_text(temp_layer, temp_buffer);
@@ -403,28 +403,28 @@ static void window_load(Window *window) {
   text_layer_set_font(s_time_layer, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
   text_layer_set_text_alignment(s_time_layer, GTextAlignmentCenter);
 
-  s_connection_layer = text_layer_create(GRect((int)(window_bounds.size.w / 2) - 27,window_bounds.size.h -99, 40, 30));
+  s_connection_layer = text_layer_create(GRect((int)(window_bounds.size.w / 2) - 25,window_bounds.size.h -97, 40, 30));
   text_layer_set_text_color(s_connection_layer, GColorBlack);
   text_layer_set_background_color(s_connection_layer, GColorClear);
   text_layer_set_font(s_connection_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
   text_layer_set_text_alignment(s_connection_layer, GTextAlignmentLeft);
   handle_bluetooth(connection_service_peek_pebble_app_connection());
 
-  s_battery_layer = text_layer_create(GRect((int)(window_bounds.size.w / 2) + 8, window_bounds.size.h -99, window_bounds.size.w,30));
+  s_battery_layer = text_layer_create(GRect((int)(window_bounds.size.w / 2) + 5, window_bounds.size.h - 97, window_bounds.size.w,30));
   text_layer_set_text_color(s_battery_layer, GColorBlack);
   text_layer_set_background_color(s_battery_layer, GColorClear);
   text_layer_set_font(s_battery_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
   text_layer_set_text_alignment(s_battery_layer, GTextAlignmentLeft);
   text_layer_set_text(s_battery_layer, "100%");
 
-  date_layer = text_layer_create(GRect(45, 67, window_bounds.size.w - 90, 34));
+  date_layer = text_layer_create(GRect(45, 67, window_bounds.size.w - 84, 34));
   text_layer_set_text_color(date_layer, GColorBlack);
   text_layer_set_background_color(date_layer, GColorClear);
   text_layer_set_font(date_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
   text_layer_set_text_alignment(date_layer, GTextAlignmentCenter);
-  text_layer_set_text(date_layer, "Sun 1 Jan");
+  text_layer_set_text(date_layer, "Sun 31 Jan");
 
-  temp_layer = text_layer_create(GRect(46, 46, window_bounds.size.w - 90, 34));
+  temp_layer = text_layer_create(GRect(45, 46, window_bounds.size.w - 85, 34));
   text_layer_set_text_color(temp_layer, GColorBlack);
   text_layer_set_background_color(temp_layer, GColorClear);
   text_layer_set_font(temp_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
